@@ -92,13 +92,31 @@ Możesz przetestować cały przepływ lokalnie, zanim skonfigurujesz Turso —
 pip install -r requirements.txt
 
 # Test z lokalnym plikiem SQLite (bez konta Turso)
-TURSO_DATABASE_URL="file:test.db" python3 run.py
+TURSO_DATABASE_URL="test.db" python3 run.py
 
 # Test z prawdziwą bazą Turso
 export TURSO_DATABASE_URL="libsql://mpk-utrudnienia-twojlogin.turso.io"
 export TURSO_AUTH_TOKEN="ey...twój-token..."
 python3 run.py
 ```
+
+## Ważne: biblioteka `libsql`, nie `libsql-client`
+
+We wcześniejszej wersji tego kodu używałem pakietu `libsql-client`. **Turso
+go zdeprecjonowało** — po migracji darmowego tieru z Fly.io na AWS (2025/2026)
+jego połączenia oparte o WebSocket zaczęły zawodzić błędem w stylu:
+
+```
+aiohttp.client_exceptions.WSServerHandshakeError: 400/500,
+message='Invalid response status', url='wss://...turso.io'
+```
+
+Ten kod używa już nowego, oficjalnego pakietu **`libsql`** (`pip install libsql`),
+który łączy się przez HTTP zamiast WebSocket i ma interfejs praktycznie
+identyczny z wbudowanym modułem `sqlite3` (`connect`, `execute`, `commit`,
+`fetchone`/`fetchall` zwracające zwykłe krotki). Jeśli w swoim projekcie masz
+gdzieś jeszcze `libsql-client` albo `libsql-experimental` w `requirements.txt` —
+zamień je na `libsql`.
 
 ## Uwaga o harmonogramie (cron) i strefie czasowej
 
@@ -176,12 +194,17 @@ Tabela `fetch_log` — log każdego uruchomienia (sukces/błąd, liczba wpisów)
 Środowisko, w którym przygotowałem ten kod, nie ma dostępu do PyPI ani do
 prawdziwego konta Turso, więc:
 - logikę zapytań SQL (`db.py`) przetestowałem lokalnym plikiem SQLite przez
-  ten sam interfejs `file:`, jaki obsługuje `libsql-client` — to samo
-  zachowanie co przy prawdziwej bazie Turso,
+  ten sam sqlite3-podobny interfejs (`connect`, `execute`, `commit`,
+  `fetchone`/`fetchall`), jaki dokumentacja Turso deklaruje dla pakietu
+  `libsql` — to samo zachowanie co przy prawdziwej bazie Turso,
 - **nie przetestowałem** faktycznego połączenia sieciowego z Turso ani
-  realnego działania paczki `libsql-client` (kod jest zgodny z oficjalną
-  dokumentacją Turso, ale warto zweryfikować pierwszym uruchomieniem
-  lokalnym z prawdziwymi danymi logowania — patrz "Test lokalny" wyżej).
+  realnego działania paczki `libsql` (kod jest zgodny z oficjalną,
+  aktualną dokumentacją Turso z lipca 2026, ale warto zweryfikować
+  pierwszym uruchomieniem lokalnym z prawdziwymi danymi logowania —
+  patrz "Test lokalny" wyżej). Poprzednia wersja tego kodu używała
+  zdeprecjonowanego pakietu `libsql-client` i faktycznie nie działała
+  na produkcyjnych bazach Turso hostowanych na AWS — dzięki zgłoszonemu
+  przez Ciebie błędowi to zostało poprawione.
 
 ## Jeśli strona MPK zwróci błąd 403
 

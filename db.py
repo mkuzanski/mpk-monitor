@@ -1,26 +1,25 @@
 """
-db.py (edycja Turso / libSQL)
-------------------------------
-Warstwa dostępu do bazy Turso dla monitora utrudnień MPK Łódź.
+db.py (edycja Turso - pakiet `libsql`)
+---------------------------------------
+WAŻNE: Turso zdeprecjonowało starszy pakiet `libsql-client` (oparty o WebSocket).
+Po migracji darmowego tieru Turso z Fly.io na AWS (2025/2026) połączenia przez
+WebSocket zaczęły zawodzić błędem w stylu:
+    aiohttp.client_exceptions.WSServerHandshakeError: 400/500,
+    message='Invalid response status', url='wss://...turso.io'
 
-Turso to baza w chmurze w 100% kompatybilna z SQLite (silnik libSQL).
-Zamiast pliku .db na dysku, łączymy się z nią przez sieć - dzięki temu
-GitHub Actions (który za każdym razem startuje "czysty" kontener bez
-trwałego dysku) może bezpiecznie zapisywać dane między uruchomieniami.
+Ten plik używa nowego, oficjalnego pakietu `libsql` (pip install libsql),
+który łączy się przez HTTP i ma interfejs praktycznie identyczny z wbudowanym
+modułem `sqlite3` (connect, execute, commit, fetchone/fetchall na krotkach).
 
-Używa oficjalnego klienta `libsql-client` (pip install libsql-client).
 Ten sam kod działa:
-  - lokalnie z plikiem SQLite:  url="file:utrudnienia.db"   (do testów, bez konta Turso)
-  - zdalnie z bazą w Turso:     url="libsql://twoja-baza-org.turso.io", auth_token="..."
-
-Schemat tabel jest identyczny jak w wersji "czysty SQLite na VPS" -
-patrz opis kolumn poniżej.
+  - lokalnie z plikiem SQLite:  database="utrudnienia_test.db"           (testy, bez konta Turso)
+  - zdalnie z bazą w Turso:     database="libsql://twoja-baza-org.turso.io", auth_token="..."
 """
 
 import hashlib
 from datetime import datetime, timezone
 
-import libsql_client
+import libsql
 
 SCHEMA_STATEMENTS = [
     """
@@ -63,38 +62,38 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def get_client(url: str, auth_token: str | None = None):
+def get_connection(database_url: str, auth_token: str | None = None):
     """
-    Tworzy synchronicznego klienta libSQL/Turso.
+    Tworzy połączenie (interfejs jak sqlite3.connect).
 
-    url:
-      - "file:sciezka/do/lokalnego.db"      -> lokalny plik (testy, bez sieci/konta Turso)
-      - "libsql://twoja-baza-org.turso.io"   -> baza Turso w chmurze
+    database_url:
+      - "sciezka/do/lokalnego.db"            -> lokalny plik (testy, bez sieci/konta Turso)
+      - "libsql://twoja-baza-org.turso.io"    -> baza Turso w chmurze
     auth_token:
-      - wymagany dla "libsql://", pomijany dla "file:"
+      - wymagany dla adresu Turso, pomijany dla pliku lokalnego
     """
-    kwargs = {}
     if auth_token:
-        kwargs["auth_token"] = auth_token
-    return libsql_client.create_client_sync(url, **kwargs)
+        return libsql.connect(database=database_url, auth_token=auth_token)
+    return libsql.connect(database=database_url)
 
 
-def init_db(client):
+def init_db(conn):
     for stmt in SCHEMA_STATEMENTS:
-        client.execute(stmt)
+        conn.execute(stmt)
+    conn.commit()
 
 
-def log_fetch(client, success: bool, entries_found: int = None, error_message: str = None):
-    client.execute(
+def log_fetch(conn, success: bool, entries_found: int = None, error_message: str = None):
+    conn.execute(
         "INSERT INTO fetch_log (fetched_at, success, entries_found, error_message) VALUES (?, ?, ?, ?)",
         [now_iso(), int(success), entries_found, error_message],
     )
+    conn.commit()
 
 
-def sync_entries(client, entries: list[dict]) -> dict:
+def sync_entries(conn, entries: list[dict]) -> dict:
     """
     Synchronizuje aktualnie znalezione wpisy `entries` ze stanem bazy.
-    Logika identyczna jak w wersji SQLite-na-dysku:
       - nowy wpis (nowy hash) -> INSERT
       - wpis już znany i wciąż aktywny -> odświeżenie last_seen_at
       - wpis znany, ale wcześniej zamknięty (np. wrócił) -> reaktywacja
@@ -110,10 +109,11 @@ def sync_entries(client, entries: list[dict]) -> dict:
         h = compute_hash(e["linie"], e["utrudnienie"], e["zmiana_sytuacji"])
         seen_hashes.add(h)
 
-        rs = client.execute("SELECT id, active FROM utrudnienia WHERE content_hash = ?", [h])
+        cur = conn.execute("SELECT id, active FROM utrudnienia WHERE content_hash = ?", [h])
+        row = cur.fetchone()
 
-        if len(rs.rows) == 0:
-            client.execute(
+        if row is None:
+            conn.execute(
                 """
                 INSERT INTO utrudnienia
                     (content_hash, linie, utrudnienie, zmiana_sytuacji,
@@ -129,29 +129,29 @@ def sync_entries(client, entries: list[dict]) -> dict:
             )
             summary["new"] += 1
         else:
-            row = rs.rows[0]
-            row_id = row["id"]
-            active = row["active"]
+            row_id, active = row[0], row[1]
             if active == 0:
-                client.execute(
+                conn.execute(
                     "UPDATE utrudnienia SET active = 1, disappeared_at = NULL, last_seen_at = ? WHERE id = ?",
                     [ts, row_id],
                 )
                 summary["updated"] += 1
             else:
-                client.execute(
+                conn.execute(
                     "UPDATE utrudnienia SET last_seen_at = ? WHERE id = ?",
                     [ts, row_id],
                 )
                 summary["unchanged"] += 1
 
-    rs_active = client.execute("SELECT id, content_hash FROM utrudnienia WHERE active = 1")
-    for row in rs_active.rows:
-        if row["content_hash"] not in seen_hashes:
-            client.execute(
+    cur_active = conn.execute("SELECT id, content_hash FROM utrudnienia WHERE active = 1")
+    for row in cur_active.fetchall():
+        row_id, content_hash = row[0], row[1]
+        if content_hash not in seen_hashes:
+            conn.execute(
                 "UPDATE utrudnienia SET active = 0, disappeared_at = ? WHERE id = ?",
-                [ts, row["id"]],
+                [ts, row_id],
             )
             summary["closed"] += 1
 
+    conn.commit()
     return summary

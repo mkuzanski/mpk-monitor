@@ -11,7 +11,7 @@ Wymagane zmienne środowiskowe:
     TURSO_AUTH_TOKEN     token wygenerowany przez `turso db tokens create <nazwa-bazy>`
 
 Test lokalny bez konta Turso (baza jako zwykły plik SQLite obok skryptu):
-    TURSO_DATABASE_URL=file:utrudnienia.db python3 run.py
+    TURSO_DATABASE_URL=utrudnienia_test.db python3 run.py
 """
 
 import os
@@ -19,7 +19,7 @@ import sys
 import logging
 
 from scraper import fetch_and_parse, FetchError, URL
-from db import get_client, init_db, sync_entries, log_fetch
+from db import get_connection, init_db, sync_entries, log_fetch
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +31,7 @@ log = logging.getLogger("mpk_monitor")
 
 def main():
     db_url = os.environ.get("TURSO_DATABASE_URL")
-    auth_token = os.environ.get("TURSO_AUTH_TOKEN")  # niewymagany dla url typu file:
+    auth_token = os.environ.get("TURSO_AUTH_TOKEN")  # niewymagany dla lokalnego pliku
 
     if not db_url:
         log.error(
@@ -40,24 +40,24 @@ def main():
         )
         sys.exit(1)
 
-    client = get_client(db_url, auth_token)
-    init_db(client)
+    conn = get_connection(db_url, auth_token)
+    init_db(conn)
 
     try:
         entries = fetch_and_parse(URL)
     except FetchError as e:
         log.error("Nie udało się pobrać strony: %s", e)
-        log_fetch(client, success=False, error_message=str(e))
-        client.close()
+        log_fetch(conn, success=False, error_message=str(e))
+        conn.close()
         sys.exit(1)
     except Exception as e:  # nieoczekiwany błąd parsowania - nie chcemy niejasnego tracebacku w Actions
         log.exception("Nieoczekiwany błąd podczas pobierania/parsowania strony")
-        log_fetch(client, success=False, error_message=str(e))
-        client.close()
+        log_fetch(conn, success=False, error_message=str(e))
+        conn.close()
         sys.exit(1)
 
-    summary = sync_entries(client, entries)
-    log_fetch(client, success=True, entries_found=len(entries))
+    summary = sync_entries(conn, entries)
+    log_fetch(conn, success=True, entries_found=len(entries))
 
     log.info(
         "Sprawdzono stronę: %d aktywnych utrudnień (nowe: %d, wznowione: %d, "
@@ -65,7 +65,7 @@ def main():
         len(entries), summary["new"], summary["updated"], summary["closed"], summary["unchanged"],
     )
 
-    client.close()
+    conn.close()
 
 
 if __name__ == "__main__":
