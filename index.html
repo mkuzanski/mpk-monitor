@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPK Łódź — Utrudnienia w ruchu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #17191b;
+    --panel: #202325;
+    --panel-raised: #26292c;
+    --line: #34383b;
+    --amber: #ffb000;
+    --amber-dim: #8a6400;
+    --text: #eceeef;
+    --text-dim: #9aa0a6;
+    --ok: #4caf7d;
+    --closed: #6b7076;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Inter', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(255,176,0,0.06), transparent),
+      repeating-linear-gradient(180deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 28px 20px 64px;
+  }
+
+  /* --- Nagłówek: tablica przystankowa --- */
+  header.board {
+    background: #0e0f10;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  header.board::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(180deg, rgba(255,176,0,0.025) 0px, transparent 1px, transparent 2px);
+    pointer-events: none;
+  }
+  .board-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .board-title {
+    font-family: var(--mono);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-size: 1.35rem;
+    color: var(--amber);
+    text-shadow: 0 0 18px rgba(255,176,0,0.35);
+  }
+  .board-title span { color: var(--text-dim); font-weight: 400; }
+  .live-dot {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--ok);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 0.05em;
+  }
+  .live-dot::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 8px var(--ok);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .board-sub {
+    margin-top: 6px;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  /* --- Pasek filtrów --- */
+  .filters {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
+  input[type="date"] {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color-scheme: dark;
+  }
+  input[type="date"]:focus, button:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+  }
+  button {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 9px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel-raised);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  button:hover { border-color: var(--amber-dim); }
+  button.primary {
+    background: var(--amber);
+    color: #1a1300;
+    border-color: var(--amber);
+  }
+  button.primary:hover { background: #ffc23a; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:disabled:hover { border-color: var(--line); }
+
+  /* --- Lista utrudnień --- */
+  .list { display: flex; flex-direction: column; gap: 10px; }
+
+  .entry {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 14px;
+    align-items: start;
+  }
+
+  .linia-badge {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 0.95rem;
+    background: #0b0b0c;
+    color: var(--amber);
+    border: 1px solid #000;
+    border-radius: 5px;
+    padding: 5px 9px;
+    min-width: 2.6em;
+    text-align: center;
+    box-shadow: inset 0 0 0 1px rgba(255,176,0,0.15), 0 1px 0 rgba(255,255,255,0.03);
+    white-space: nowrap;
+    align-self: center;
+  }
+
+  .entry-body { min-width: 0; }
+  .entry-utrudnienie {
+    font-size: 0.93rem;
+    line-height: 1.45;
+    color: var(--text);
+  }
+  .entry-zmiana {
+    margin-top: 6px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-dim);
+    padding-left: 10px;
+    border-left: 2px solid var(--line);
+  }
+  .entry-meta {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .entry-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    text-align: right;
+  }
+  .status-pill {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .status-pill.active { background: rgba(76,175,125,0.15); color: var(--ok); }
+  .status-pill.closed { background: rgba(107,112,118,0.18); color: var(--closed); }
+
+  /* --- Stany puste / ładowania / błędu --- */
+  .state-msg {
+    text-align: center;
+    padding: 48px 20px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+  }
+  .state-msg strong { color: var(--text); display: block; margin-bottom: 6px; font-size: 1rem; }
+  .state-msg code {
+    display: block;
+    margin-top: 12px;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+    border-radius: 6px;
+    text-align: left;
+    white-space: pre-wrap;
+    color: #ff8a80;
+  }
+
+  /* --- Paginacja --- */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 24px;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 40px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
+  footer a { color: var(--amber); text-decoration: none; }
+
+  @media (max-width: 560px) {
+    .entry { grid-template-columns: auto 1fr; }
+    .entry-side { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; margin-top: 4px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot::before { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="board">
+      <div class="board-top">
+        <div class="board-title">MPK ŁÓDŹ <span>/ utrudnienia w ruchu</span></div>
+        <div class="live-dot">NA ŻYWO</div>
+      </div>
+      <div class="board-sub">Dane aktualizowane automatycznie co kilka minut, od najnowszych.</div>
+    </header>
+
+    <div class="filters">
+      <div class="field">
+        <label for="dateFrom">Od</label>
+        <input type="date" id="dateFrom">
+      </div>
+      <div class="field">
+        <label for="dateTo">Do</label>
+        <input type="date" id="dateTo">
+      </div>
+      <button class="primary" id="btnFilter">Filtruj</button>
+      <button id="btnClear">Wyczyść filtr</button>
+    </div>
+
+    <div id="content">
+      <div class="state-msg">Wczytywanie…</div>
+    </div>
+
+    <div class="pagination" id="pagination" style="display:none;">
+      <button id="btnPrev">‹ Poprzednia</button>
+      <span id="pageInfo">Strona 1</span>
+      <button id="btnNext">Następna ›</button>
+    </div>
+
+    <footer>MPK monitor · dane: mpk.lodz.pl</footer>
+  </div>
+
+<script>
+// =====================================================================
+// KONFIGURACJA — wklej tutaj dane swojej bazy Turso (token TYLKO odczytu!)
+// Wygeneruj je komendami:
+//   turso db show <nazwa-bazy> --http-url
+//   turso db tokens create <nazwa-bazy> --read-only
+// =====================================================================
+const CONFIG = {
+  TURSO_HTTP_URL: "https://mpk-utrudnienia-mkuzanski.aws-eu-west-1.turso.io",     // np. https://mpk-utrudnienia-twojlogin.turso.io
+  TURSO_READ_ONLY_TOKEN"eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJncm91cF91dWlkIjoiNDY3NTAzMjgtNzI0ZC00OWE1LWE4ZDctODYxOWQ4YmNmZDZmIiwianRpIjoiMG5MVENIMWFFZkdMQTNyZVRFdUkxZyIsIm9yZ19pZCI6MTAwMDE5NzM3MCwic2NvcGVzIjp7InNjb3BlcyI6WyJyZWFkIl19fQ.ksHhnhDE1k8q-_zQ53l7HNSgDldraMtnyhAMEKmZgqEVEafCkv1ixgI4CYGPus5nAaEeylYIZOX6ONUSvk5lCA"
+};
+// =====================================================================
+
+const PAGE_SIZE = 25;
+let currentPage = 1;
+let totalPages = 1;
+
+const contentEl = document.getElementById('content');
+const paginationEl = document.getElementById('pagination');
+const pageInfoEl = document.getElementById('pageInfo');
+const btnPrev = document.getElementById('btnPrev');
+const btnNext = document.getElementById('btnNext');
+const dateFromEl = document.getElementById('dateFrom');
+const dateToEl = document.getElementById('dateTo');
+
+document.getElementById('btnFilter').addEventListener('click', () => { currentPage = 1; loadPage(); });
+document.getElementById('btnClear').addEventListener('click', () => {
+  dateFromEl.value = '';
+  dateToEl.value = '';
+  currentPage = 1;
+  loadPage();
+});
+btnPrev.addEventListener('click', () => { if (currentPage > 1) { currentPage--; loadPage(); } });
+btnNext.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; loadPage(); } });
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
+}
+
+function formatTimestamp(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+async function tursoQuery(statements) {
+  const url = CONFIG.TURSO_HTTP_URL.replace(/\/$/, '') + '/v2/pipeline';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${CONFIG.TURSO_READ_ONLY_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requests: [
+        ...statements.map(stmt => ({ type: 'execute', stmt })),
+        { type: 'close' },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  const results = [];
+  for (const r of data.results) {
+    if (r.type === 'error') {
+      throw new Error(r.error?.message || 'Nieznany błąd zapytania Turso');
+    }
+    if (r.response?.type === 'execute') {
+      const { cols, rows } = r.response.result;
+      const colNames = cols.map(c => c.name);
+      const parsed = rows.map(row => {
+        const obj = {};
+        row.forEach((cell, i) => { obj[colNames[i]] = cell?.value ?? null; });
+        return obj;
+      });
+      results.push(parsed);
+    }
+  }
+  return results;
+}
+
+function buildDateArgs() {
+  const from = dateFromEl.value ? `${dateFromEl.value}T00:00:00+00:00` : null;
+  const to = dateToEl.value ? `${dateToEl.value}T23:59:59+00:00` : null;
+  return { from, to };
+}
+
+function whereClause(from, to) {
+  if (from && to) return 'WHERE first_seen_at >= ? AND first_seen_at <= ?';
+  if (from) return 'WHERE first_seen_at >= ?';
+  if (to) return 'WHERE first_seen_at <= ?';
+  return '';
+}
+
+function argsFor(from, to) {
+  const args = [];
+  if (from) args.push({ type: 'text', value: from });
+  if (to) args.push({ type: 'text', value: to });
+  return args;
+}
+
+async function loadPage() {
+  if (!CONFIG.TURSO_HTTP_URL || CONFIG.TURSO_HTTP_URL.startsWith('WKLEJ')) {
+    renderConfigError();
+    return;
+  }
+
+  contentEl.innerHTML = '<div class="state-msg">Wczytywanie…</div>';
+  paginationEl.style.display = 'none';
+
+  const { from, to } = buildDateArgs();
+  const where = whereClause(from, to);
+  const args = argsFor(from, to);
+  const offset = (currentPage - 1) * PAGE_SIZE;
+
+  const countSql = `SELECT COUNT(*) AS total FROM utrudnienia ${where}`;
+  const listSql = `
+    SELECT linie, utrudnienie, zmiana_sytuacji, first_seen_at, last_seen_at, active, disappeared_at
+    FROM utrudnienia
+    ${where}
+    ORDER BY first_seen_at DESC
+    LIMIT ${PAGE_SIZE} OFFSET ${offset}
+  `;
+
+  try {
+    const [countRows, listRows] = await tursoQuery([
+      { sql: countSql, args },
+      { sql: listSql, args },
+    ]);
+
+    const total = Number(countRows[0]?.total ?? 0);
+    totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    renderList(listRows, total);
+    renderPagination();
+  } catch (err) {
+    renderFetchError(err);
+  }
+}
+
+function renderList(rows, total) {
+  if (rows.length === 0) {
+    contentEl.innerHTML = `
+      <div class="state-msg">
+        <strong>Brak utrudnień w wybranym zakresie</strong>
+        Spróbuj poszerzyć zakres dat albo wyczyść filtr.
+      </div>`;
+    return;
+  }
+
+  const items = rows.map(r => {
+    const isActive = Number(r.active) === 1;
+    const statusHtml = isActive
+      ? '<span class="status-pill active">AKTYWNE</span>'
+      : '<span class="status-pill closed">ZAMKNIĘTE</span>';
+
+    return `
+      <div class="entry">
+        <div class="linia-badge">${escapeHtml(r.linie || '—')}</div>
+        <div class="entry-body">
+          <div class="entry-utrudnienie">${escapeHtml(r.utrudnienie)}</div>
+          ${r.zmiana_sytuacji ? `<div class="entry-zmiana">${escapeHtml(r.zmiana_sytuacji)}</div>` : ''}
+          <div class="entry-meta">zgłoszono ${formatTimestamp(r.first_seen_at)}${!isActive && r.disappeared_at ? ` · zamknięto ${formatTimestamp(r.disappeared_at)}` : ''}</div>
+        </div>
+        <div class="entry-side">${statusHtml}</div>
+      </div>
+    `;
+  }).join('');
+
+  contentEl.innerHTML = `<div class="list">${items}</div>`;
+}
+
+function renderPagination() {
+  paginationEl.style.display = 'flex';
+  pageInfoEl.textContent = `Strona ${currentPage} z ${totalPages}`;
+  btnPrev.disabled = currentPage <= 1;
+  btnNext.disabled = currentPage >= totalPages;
+}
+
+function renderConfigError() {
+  contentEl.innerHTML = `
+    <div class="state-msg">
+      <strong>Strona nie jest jeszcze skonfigurowana</strong>
+      Uzupełnij TURSO_HTTP_URL i TURSO_READ_ONLY_TOKEN w sekcji CONFIG na początku pliku index.html.
+    </div>`;
+}
+
+function renderFetchError(err) {
+  contentEl.innerHTML = `
+    <div class="state-msg">
+      <strong>Nie udało się pobrać danych</strong>
+      Sprawdź adres bazy i token w sekcji CONFIG, oraz czy token ma jeszcze ważność.
+      <code>${escapeHtml(err.message || String(err))}</code>
+    </div>`;
+}
+
+loadPage();
+</script>
+</body>
+</html>

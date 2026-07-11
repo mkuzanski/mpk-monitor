@@ -83,6 +83,138 @@ Workflow (`.github/workflows/scrape.yml`) uruchomi się automatycznie zgodnie
 z harmonogramem cron, a także można go odpalić ręcznie z zakładki **Actions**
 w repo (przycisk "Run workflow" — przydatne do pierwszego testu).
 
+## Dlaczego harmonogram odpala się rzadko (i jak to naprawić)
+
+Jeśli widzisz, że workflow uruchamia się kilka razy dziennie zamiast co
+10 minut, w losowych odstępach — to **nie błąd konfiguracji**, tylko
+udokumentowane zachowanie GitHub Actions. `on: schedule` trafia do tej samej
+globalnej kolejki co wszystkie inne zadania Actions na całym GitHubie, bez
+żadnej gwarancji SLA. Przy częstych harmonogramach (rząd 5-10 minut) duża
+część zaplanowanych odpaleń jest **cicho pomijana** — nie opóźniona, tylko
+w ogóle nieuruchomiona. Im częstszy harmonogram i im większe obciążenie
+platformy, tym więcej odpaleń znika. To nasiliło się szczególnie w 2026 r.
+i dotyczy zwłaszcza kont darmowych oraz częstych cronów.
+
+**Rozwiązanie: przenieś harmonogram poza kolejkę GitHub Actions.**
+
+Zamiast polegać na wewnętrznym `schedule` GitHuba, użyj zewnętrznego,
+darmowego serwisu cron (np. [cron-job.org](https://cron-job.org)), który co
+10 minut woła GitHub API i każe *natychmiast* odpalić workflow przez
+`workflow_dispatch`. GitHub wtedy tylko wykonuje zadanie — nie musi go
+samodzielnie planować, więc znika problem gubienia uruchomień.
+
+### Krok 1: Utwórz token dostępu do GitHub API
+
+GitHub → **Settings → Developer settings → Personal access tokens →
+Fine-grained tokens → Generate new token**
+
+- Repository access: wybierz tylko swoje repo (np. `mpk-monitor`)
+- Permissions: **Actions → Read and write**
+- Skopiuj wygenerowany token (zaczyna się od `github_pat_...`) - będzie
+  potrzebny w kroku 3. Traktuj go jak hasło.
+
+### Krok 2: Znajdź nazwę pliku workflow
+
+To po prostu nazwa pliku: `scrape.yml` (w `.github/workflows/scrape.yml`).
+
+### Krok 3: Skonfiguruj cron-job.org
+
+1. Załóż darmowe konto na [cron-job.org](https://cron-job.org)
+2. **Create cronjob**:
+   - **URL**: `https://api.github.com/repos/TWOJ-LOGIN/TWOJE-REPO/actions/workflows/scrape.yml/dispatches`
+   - **Request method**: `POST`
+   - **Request body** (JSON): `{"ref":"main"}` (albo nazwa Twojej głównej gałęzi)
+   - **Headers**:
+     - `Authorization: Bearer TWÓJ_TOKEN_Z_KROKU_1`
+     - `Accept: application/vnd.github+json`
+     - `Content-Type: application/json`
+   - **Schedule**: co 10 minut, w godz. 6:00-22:00 — cron-job.org pozwala
+     ustawić to bezpośrednio w **czasie polskim** (wybierz strefę czasową
+     `Europe/Warsaw` w ustawieniach zadania), więc unikasz przeliczania na
+     UTC i problemów z czasem letnim/zimowym, które są konieczne przy
+     wewnętrznym `schedule` GitHuba.
+3. Zapisz i przetestuj przyciskiem "Run now" - powinieneś zobaczyć nowy
+   przebieg w zakładce **Actions** swojego repo w ciągu kilku sekund.
+
+Odpowiedź `204 No Content` z GitHub API oznacza sukces (dispatch nie zwraca
+treści). Błąd `401`/`403` zwykle oznacza zły/wygasły token albo za wąskie
+uprawnienia; `404` zwykle oznacza literówkę w nazwie repo/pliku workflow.
+
+### Co zostaje w repo
+
+Harmonogram `schedule` w `scrape.yml` **zostaje jako rzadki fallback** (co
+ok. 2h) na wypadek, gdyby zewnętrzny cron przestał działać — sam w sobie
+nie zapewni monitoringu co 10 minut, ale lepiej mieć jakąkolwiek siatkę
+bezpieczeństwa niż żadną.
+
+## Darmowa strona z listą utrudnień (paginacja + filtr dat)
+
+W katalogu `docs/` jest gotowa, samodzielna strona (`index.html`, bez
+frameworków ani kroku budowania), która pokazuje listę utrudnień: 25 na
+stronę, od najnowszych, z filtrem zakresu dat. Łączy się **bezpośrednio z
+Turso przez surowe HTTP API** — nie potrzeba żadnego backendu ani
+serwera pośredniczącego.
+
+```
+Przeglądarka użytkownika
+        │
+        ▼
+   docs/index.html  ──►  Turso HTTP API (/v2/pipeline)  ──►  baza utrudnienia
+```
+
+### Krok 1: Utwórz token TYLKO do odczytu
+
+To ważne — nie używaj do tego tokenu z kroku 1 głównej instrukcji (tamten
+ma prawa zapisu i trafia tylko do sekretów GitHub Actions, nigdy do
+publicznego frontendu):
+
+```bash
+turso db tokens create mpk-utrudnienia --read-only
+turso db show mpk-utrudnienia --http-url
+```
+
+### Krok 2: Uzupełnij konfigurację w `docs/index.html`
+
+Na początku sekcji `<script>` w pliku jest blok `CONFIG`:
+
+```js
+const CONFIG = {
+  TURSO_HTTP_URL: "WKLEJ_TUTAJ_HTTP_URL",      // wynik --http-url z kroku 1
+  TURSO_READ_ONLY_TOKEN: "WKLEJ_TUTAJ_TOKEN",  // token z flagą --read-only
+};
+```
+
+Wklej tam swoje wartości i zapisz plik.
+
+### Krok 3: Włącz GitHub Pages
+
+W repo: **Settings → Pages → Build and deployment → Source: Deploy from a
+branch → Branch: `main`, folder: `/docs`** → Save.
+
+Po chwili strona będzie dostępna pod adresem
+`https://TWOJ-LOGIN.github.io/TWOJE-REPO/`.
+
+### Ważna uwaga o bezpieczeństwie tego rozwiązania
+
+Token wklejony w `CONFIG` jest **widoczny publicznie** dla każdego, kto
+zajrzy w źródło strony — to nieuniknione przy architekturze "czysty
+frontend bez backendu". Dlatego:
+
+- token musi być utworzony z flagą **`--read-only`** — wtedy nawet ktoś,
+  kto go wyciągnie ze strony, może co najwyżej odczytać dane (a to i tak
+  publiczne informacje o utrudnieniach), nie może niczego zmienić ani
+  usunąć,
+- najgorszy realny scenariusz to ktoś odpytujący Twoją bazę cudzym kosztem
+  darmowego limitu odczytów Turso (500 mln/mies. — praktycznie
+  niewyczerpalne dla tej skali, patrz tabela niżej).
+
+Jeśli mimo to zależy Ci na ukryciu tokenu (np. plan na przyszłość z danymi
+wrażliwymi), rozwiązaniem jest dodanie małego proxy (np. darmowy Cloudflare
+Worker), który trzyma token po swojej stronie i tylko przekazuje zapytania
+SELECT. Nie ma tego w tej wersji, bo dla publicznych danych o utrudnieniach
+komunikacyjnych to zbędna komplikacja — ale daj znać, jeśli chcesz, żebym
+taki wariant przygotował.
+
 ## Test lokalny przed wrzuceniem na GitHub
 
 Możesz przetestować cały przepływ lokalnie, zanim skonfigurujesz Turso —
@@ -118,25 +250,17 @@ identyczny z wbudowanym modułem `sqlite3` (`connect`, `execute`, `commit`,
 gdzieś jeszcze `libsql-client` albo `libsql-experimental` w `requirements.txt` —
 zamień je na `libsql`.
 
-## Uwaga o harmonogramie (cron) i strefie czasowej
+## Uwaga o strefie czasowej fallbacku w scrape.yml
 
-GitHub Actions liczy cron **w UTC**, a strona MPK aktualizowana jest w
-godz. 6:00-22:00 **czasu polskiego**. Polska to UTC+2 latem (CEST) i UTC+1
-zimą (CET). Domyślny harmonogram w `scrape.yml`:
+Ten wewnętrzny `schedule` GitHuba to teraz tylko rzadka siatka
+bezpieczeństwa (patrz sekcja wyżej), więc jego dokładna godzina nie jest
+krytyczna. Warto jednak wiedzieć: GitHub Actions liczy cron **w UTC**, a
+strona MPK aktualizowana jest w godz. 6:00-22:00 **czasu polskiego** (UTC+2
+latem / UTC+1 zimą). Fallback `"17 */2 * * *"` (co ok. 2h, o niepełnej
+godzinie) i tak złapie sensowną część dnia niezależnie od pory roku.
 
-```yaml
-- cron: "*/10 4-21 * * *"
-```
-
-to celowo szerszy zakres (4:00-21:00 UTC), żeby z zapasem obejmować oba
-warianty czasu, kosztem kilku dodatkowych, "pustych" uruchomień na
-początku/końcu dnia. Możesz go zawęzić lub rozszerzyć wedle potrzeby.
-
-**Ważne zastrzeżenie GitHuba:** harmonogram `schedule` jest realizowany
-"z najlepszą możliwą starannością" — przy dużym obciążeniu GitHuba
-uruchomienia mogą się opóźniać o kilka-kilkanaście minut. Dla monitoringu
-utrudnień komunikacyjnych to nie problem, ale nie jest to narzędzie do zadań
-wymagających precyzji co do minuty.
+Dla głównego harmonogramu w cron-job.org możesz spokojnie wybrać strefę
+`Europe/Warsaw` wprost w ich interfejsie i zapomnieć o przeliczaniu na UTC.
 
 ## Darmowe limity — czy na pewno się zmieszczę?
 
