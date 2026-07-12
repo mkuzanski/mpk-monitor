@@ -293,25 +293,61 @@ baza jest dostępna z internetu, nie tylko z GitHub Actions.
 
 ## Struktura bazy danych
 
-Identyczna jak w wariancie "SQLite na VPS":
-
 Tabela `utrudnienia`:
 
 | Kolumna | Opis |
 |---|---|
-| `content_hash` | hash treści wpisu (linie+opis+zmiana) — wykrywa duplikaty |
+| `content_hash` | hash TOŻSAMOŚCI przeszkody (linie+utrudnienie — **bez** zmiana_sytuacji, bo ta może się aktualizować) |
 | `linie` | numery linii, których dotyczy utrudnienie |
 | `utrudnienie` | opis utrudnienia |
-| `zmiana_sytuacji` | opis objazdu / zmiany sytuacji |
+| `zmiana_sytuacji` | opis objazdu / zmiany sytuacji — **aktualna** wersja; poprzednie wersje patrz `zmiana_historia` |
 | `data_dodania_raw` | oryginalny tekst "Dodano dnia..." dla utrudnienia |
-| `data_zmiany_raw` | oryginalny tekst "Dodano dnia..." dla zmiany sytuacji |
+| `data_zmiany_raw` | oryginalny tekst "Dodano dnia..." dla aktualnej wersji zmiany sytuacji |
 | `lokalizacja_url` | link "Pokaż lokalizację" jeśli podany |
 | `first_seen_at` | kiedy scraper po raz pierwszy zauważył wpis (UTC) |
 | `last_seen_at` | ostatnie potwierdzenie obecności wpisu (UTC) |
 | `disappeared_at` | kiedy wpis zniknął (UTC), `NULL` jeśli nadal aktywny |
 | `active` | `1` jeśli nadal widoczny na stronie, `0` jeśli zniknął |
 
+Tabela `zmiana_historia` — każda zaobserwowana wersja opisu objazdu dla danej
+przeszkody, w kolejności chronologicznej:
+
+| Kolumna | Opis |
+|---|---|
+| `utrudnienie_id` | odnośnik do `utrudnienia.id` |
+| `zmiana_sytuacji` | treść tej konkretnej wersji |
+| `data_zmiany_raw` | oryginalny tekst "Dodano dnia..." zeskrobany razem z tą wersją |
+| `recorded_at` | kiedy scraper po raz pierwszy zauważył tę wersję (UTC) |
+
+Przykład: pełna historia zmian opisu objazdu dla danej przeszkody:
+
+```sql
+SELECT zh.recorded_at, zh.zmiana_sytuacji
+FROM zmiana_historia zh
+JOIN utrudnienia u ON u.id = zh.utrudnienie_id
+WHERE u.linie = '83' AND u.utrudnienie LIKE '%Siewnej%'
+ORDER BY zh.recorded_at;
+```
+
 Tabela `fetch_log` — log każdego uruchomienia (sukces/błąd, liczba wpisów).
+
+### O co chodzi ze zmianą `content_hash`
+
+Wcześniej tożsamość wpisu liczyła się z trzech pól (linie+utrudnienie+zmiana_sytuacji).
+To powodowało duplikaty: gdy MPK samo dopisywało/aktualizowało szczegóły
+objazdu dla tej samej, wciąż trwającej przeszkody, scraper widział to jako
+zupełnie nowy wpis. Teraz tożsamość to tylko (linie+utrudnienie) — aktualizacje
+opisu objazdu trafiają do tego samego wiersza `utrudnienia` (i do historii),
+zamiast tworzyć duplikat.
+
+**Jeśli już masz działającą bazę:** ta zmiana nie migruje automatycznie
+starych duplikatów, które mogły powstać przed poprawką — nowe uruchomienia
+po prostu przestaną tworzyć kolejne. Jeśli chcesz, mogę przygotować
+jednorazowy skrypt scalający już istniejące duplikaty (grupowanie po
+linie+utrudnienie, zachowanie jednego wiersza + przeniesienie pozostałych
+wersji do `zmiana_historia`) — daj znać.
+
+
 
 ## Czego nie przetestowano w tym środowisku
 
