@@ -162,7 +162,7 @@ async function loadPage() {
     SELECT id, linie, utrudnienie, zmiana_sytuacji, first_seen_at, last_seen_at, active, disappeared_at
     FROM utrudnienia
     ${where}
-    ORDER BY first_seen_at DESC
+    ORDER BY active DESC, disappeared_at DESC, first_seen_at DESC
     LIMIT ${PAGE_SIZE} OFFSET ${offset}
   `;
 
