@@ -20,6 +20,54 @@ document.getElementById('btnClear').addEventListener('click', () => {
 btnPrev.addEventListener('click', () => { if (currentPage > 1) { currentPage--; loadPage(); } });
 btnNext.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; loadPage(); } });
 
+contentEl.addEventListener('click', async (event) => {
+  const btn = event.target.closest('.history-toggle');
+  if (!btn) return;
+
+  const panel = btn.nextElementSibling;
+  if (!panel || !panel.classList.contains('history-panel')) return;
+
+  if (!panel.hasAttribute('hidden')) {
+    panel.setAttribute('hidden', '');
+    btn.textContent = 'Historia zmian ▾';
+    return;
+  }
+
+  panel.removeAttribute('hidden');
+  btn.textContent = 'Historia zmian ▴';
+
+  if (panel.dataset.loaded === 'true') return; // już wczytane raz - nie odpytuj ponownie
+
+  panel.innerHTML = '<div class="history-loading">Wczytywanie historii…</div>';
+  const entryId = btn.dataset.entryId;
+
+  try {
+    const [historyRows] = await tursoQuery([
+      {
+        sql: 'SELECT recorded_at, zmiana_sytuacji FROM zmiana_historia WHERE utrudnienie_id = ? ORDER BY recorded_at',
+        args: [{ type: 'integer', value: String(entryId) }],
+      },
+    ]);
+    renderHistoryPanel(panel, historyRows);
+    panel.dataset.loaded = 'true';
+  } catch (err) {
+    panel.innerHTML = `<div class="history-error">Nie udało się wczytać historii: ${escapeHtml(err.message || String(err))}</div>`;
+  }
+});
+
+function renderHistoryPanel(panel, rows) {
+  if (!rows || rows.length === 0) {
+    panel.innerHTML = '<div class="history-empty">Brak zapisanej historii.</div>';
+    return;
+  }
+  panel.innerHTML = rows.map(r => `
+    <div class="history-item">
+      <time>${formatTimestamp(r.recorded_at)}</time>
+      <p>${escapeHtml(r.zmiana_sytuacji || '—')}</p>
+    </div>
+  `).join('');
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str ?? '';
@@ -111,7 +159,7 @@ async function loadPage() {
 
   const countSql = `SELECT COUNT(*) AS total FROM utrudnienia ${where}`;
   const listSql = `
-    SELECT linie, utrudnienie, zmiana_sytuacji, first_seen_at, last_seen_at, active, disappeared_at
+    SELECT id, linie, utrudnienie, zmiana_sytuacji, first_seen_at, last_seen_at, active, disappeared_at
     FROM utrudnienia
     ${where}
     ORDER BY first_seen_at DESC
@@ -159,6 +207,8 @@ function renderList(rows, total) {
           <span class="expand-hint">▾ pokaż więcej</span>
           ${r.zmiana_sytuacji ? `<div class="entry-zmiana truncatable">${escapeHtml(r.zmiana_sytuacji)}</div><span class="expand-hint">▾ pokaż więcej</span>` : ''}
           <div class="entry-meta">zgłoszono ${formatTimestamp(r.first_seen_at)}${!isActive && r.disappeared_at ? ` · zamknięto ${formatTimestamp(r.disappeared_at)}` : ''}</div>
+          <button class="history-toggle" type="button" data-entry-id="${r.id}">Historia zmian ▾</button>
+          <div class="history-panel" hidden></div>
         </div>
         <div class="entry-side">${statusHtml}</div>
       </div>
